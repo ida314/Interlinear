@@ -95,6 +95,9 @@ means character count and text must rejoin without spaces. Handled, and tested.
 
 ## Status
 
+Picking this up mid-stream? Start with **[HANDOFF.md](HANDOFF.md)** — current state,
+invariants that must not be broken, and what to do next.
+
 Milestone A (pipeline as a CLI) is built. Stages 1-7 are implemented; stages 2, 4 and 5
 require the GPU extras and have not been run on real hardware yet.
 
