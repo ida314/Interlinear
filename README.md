@@ -66,8 +66,16 @@ The pure stages (models, dsp, segment, plan, render) have no GPU or network depe
 run anywhere:
 
 ```bash
-python -m venv .venv && .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest            # 74 tests, ~0.3s
+python -m venv .venv && .venv/bin/pip install -e '.[dev,web]'
+.venv/bin/pytest            # 131 tests, ~3s
+```
+
+Run the service with two processes — the worker is deliberately separate from the API so
+CUDA stays out of a threaded ASGI server and restarting the web layer never kills a job:
+
+```bash
+.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+.venv/bin/python -m app.worker
 ```
 
 GPU and network tests are opt-in: `pytest -m gpu`, `pytest -m network`.
@@ -98,14 +106,18 @@ means character count and text must rejoin without spaces. Handled, and tested.
 Picking this up mid-stream? Start with **[HANDOFF.md](HANDOFF.md)** — current state,
 invariants that must not be broken, and what to do next.
 
-Milestone A (pipeline as a CLI) is built. Stages 1-7 are implemented; stages 2, 4 and 5
-require the GPU extras and have not been run on real hardware yet.
+All seven stages are implemented, plus the SQLite job queue, worker, web UI, live preview
+and HTTP API.
 
 Verified end to end on synthetic audio for both Russian and Spanish: segment → translate →
 TTS → plan → render → MP3, with stubs standing in for the ASR, LLM and TTS models.
 
-Not yet built: the SQLite job queue, the FastAPI/HTMX web UI, the preview endpoint, and the
-phase-2 video renderer.
+**Nothing has run on real hardware yet.** Stages 2, 4 and 5 need the GPU extras, so
+`asr.py`, `tts.py`, the SaT detector and the LLM client have never actually executed —
+expect real bugs on first contact.
+
+Not yet built: the phase-2 video renderer, the Dockerfile, and Russian as a bilingual
+*target* (Kokoro has no Russian voice).
 
 **The next step is to run a real video and listen to the output.** The splice quality and
 gap defaults are the difference between usable and grating, and no test can tell you whether
