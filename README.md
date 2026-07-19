@@ -1,4 +1,4 @@
-# Bilingual Audio Generator
+# Interlinear: Bilingual Audio Generator
 
 Turn a video into bilingual audio: every spoken sentence is followed by an AI-generated
 translation of that sentence, with adjustable pacing. Built for language learning, and to
