@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title or job.url }}{% endblock %}
+{% block body %}
+
+<p class="muted mono" style="margin-top:-1rem">
+  <a href="/">&larr; all jobs</a> · {{ job.id }}
+</p>
+
+<div class="card" id="status-card">
+  <h2 style="margin-top:0">{{ job.title or job.url }}</h2>
+  {% include "_status.html" %}
+</div>
+
+<script>
+(() => {
+  const jobId = {{ job.id | tojson }};
+  const card = document.getElementById('status-card');
+  let timer = null;
+
+  // Poll only while the job can still change; the fragment says when to stop. Cheaper than
+  // a websocket and there is no state to lose if the page or the API restarts.
+  const poll = async () => {
+    try {
+      const res = await fetch(`/jobs/${jobId}/status`);
+      if (!res.ok) return;
+      const el = document.getElementById('status');
+      el.outerHTML = await res.text();
+      if (document.getElementById('status').dataset.poll === '1') {
+        timer = setTimeout(poll, 2000);
+      } else {
+        // Terminal: the page now needs the knob panel and sentence list it did not have.
+        location.reload();
+      }
+    } catch { timer = setTimeout(poll, 5000); }
+  };
+
+  card.addEventListener('click', async ev => {
+    const action = ev.target.dataset?.action;
+    if (!action) return;
+    ev.target.disabled = true;
+    await fetch(`/api/jobs/${jobId}/${action}`, { method: 'POST' }).catch(() => {});
+    clearTimeout(timer);
+    poll();
+  });
+
+  if (document.getElementById('status').dataset.poll === '1') timer = setTimeout(poll, 2000);
+})();
+</script>
+
+{% if has_output and timeline %}
+<div class="card">
+  <h2 style="margin-top:0">Pacing</h2>
+  <p class="muted" style="font-size:.85rem;margin-top:0">
+    These re-render in milliseconds — no model runs. Adjust, hear the excerpt, then apply to
+    the whole file.
+  </p>
+
+  <div class="grid">
+    <div>
+      <label for="k_speed">Translation speed <span id="v_speed" class="mono"></span></label>
+      <input id="k_speed" type="range" min="0.6" max="1.8" step="0.05"
+             value="{{ timeline.params.tts_speed }}">
+    </div>
+    <div>
+      <label for="k_pre">Pause before <span id="v_pre" class="mono"></span></label>
+      <input id="k_pre" type="range" min="0" max="1.5" step="0.05"
+             value="{{ timeline.params.pre_gap }}">
+    </div>
+    <div>
+      <label for="k_post">Pause after <span id="v_post" class="mono"></span></label>
+      <input id="k_post" type="range" min="0" max="1.5" step="0.05"
+             value="{{ timeline.params.post_gap }}">
+    </div>
+    <div>
+      <label for="k_seg">Preview sentence <span id="v_seg" class="mono"></span></label>
+      <input id="k_seg" type="range" min="0" max="{{ [timeline.speech_segment_count - 1, 0] | max }}"
+             step="1" value="0">
+    </div>
+  </div>
+
+  <audio id="preview" controls preload="none"></audio>
+
+  <div class="row" style="margin-top:1rem">
+    <button type="button" id="apply">Apply to full file</button>
+    <span id="applied" class="muted mono"></span>
+  </div>
+</div>
+
+<script>
+(() => {
+  const jobId = {{ job.id | tojson }};
+  const el = id => document.getElementById(id);
+  const knobs = { speed: el('k_speed'), pre: el('k_pre'), post: el('k_post'), seg: el('k_seg') };
+  const audio = el('preview');
+  let timer = null, token = 0;
+
+  const labels = () => {
+    el('v_speed').textContent = Number(knobs.speed.value).toFixed(2) + '×';
+    el('v_pre').textContent   = Number(knobs.pre.value).toFixed(2) + 's';
+    el('v_post').textContent  = Number(knobs.post.value).toFixed(2) + 's';
+    el('v_seg').textContent   = '#' + knobs.seg.value;
+  };
+
+  // Debounced so dragging a slider issues one request, not fifty. The render itself is
+  // fast enough that this is the only throttling needed.
+  const refresh = () => {
+    const mine = ++token;
+    const q = new URLSearchParams({
+      segment: knobs.seg.value, tts_speed: knobs.speed.value,
+      pre_gap: knobs.pre.value, post_gap: knobs.post.value,
+    });
+    fetch(`/api/jobs/${jobId}/preview?` + q)
+      .then(r => r.ok ? r.blob() : Promise.reject(r.statusText))
+      .then(b => {
+        if (mine !== token) return;             // a newer drag already superseded this
+        if (audio.src) URL.revokeObjectURL(audio.src);
+        audio.src = URL.createObjectURL(b);
+        audio.play().catch(() => {});           // autoplay may be blocked; controls still work
+      })
+      .catch(() => {});
+  };
+
+  Object.values(knobs).forEach(k => k.addEventListener('input', () => {
+    labels();
+    clearTimeout(timer);
+    timer = setTimeout(refresh, 300);
+  }));
+
+  el('apply').addEventListener('click', async () => {
+    const btn = el('apply');
+    btn.disabled = true;
+    el('applied').textContent = 'rendering…';
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/rerender`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ params: {
+          tts_speed: Number(knobs.speed.value),
+          pre_gap: Number(knobs.pre.value),
+          post_gap: Number(knobs.post.value),
+        }}),
+      });
+      const data = await res.json();
+      el('applied').textContent = data.requeued
+        ? `requeued from ${data.from_stage}`
+        : `${data.duration}s (${data.expansion}× source)`;
+    } catch (e) {
+      el('applied').textContent = 'failed';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  labels();
+})();
+</script>
+</div>
+{% endif %}
+
+{% if segments %}
+<div class="card">
+  <h2 style="margin-top:0">
+    Sentences
+    <span class="muted mono" style="font-weight:400">
+      {{ timeline.source.detected_lang }} → {{ timeline.params.target_lang }},
+      {{ timeline.segments | length }} total
+    </span>
+  </h2>
+  {% for seg in segments %}
+  <div class="seg {{ 'skip' if seg.kind != 'speech' }}">
+    <span class="t">{{ '%d:%05.2f' | format((seg.start // 60) | int, seg.start % 60) }}</span>
+    <span>{{ seg.text }}</span>
+    <span class="muted">{{ seg.translation or ('— ' + seg.kind) }}</span>
+  </div>
+  {% endfor %}
+  {% if timeline.segments | length > segments | length %}
+  <p class="muted" style="font-size:.85rem">
+    Showing first {{ segments | length }}. Full detail in
+    <a href="/files/{{ job.id }}/timeline.json">timeline.json</a>.
+  </p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

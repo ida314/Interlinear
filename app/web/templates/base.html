@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Bilingual Audio{% endblock %}</title>
+<style>
+  :root {
+    --bg: #fbfaf8; --fg: #1a1a18; --muted: #6b6b66; --line: #e3e1dc;
+    --card: #ffffff; --accent: #b8593a; --ok: #3f7a4a; --bad: #b3352b; --warn: #a07220;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a; --fg: #e8e6e1; --muted: #96948d; --line: #2c2c32;
+      --card: #1e1e23; --accent: #e0785a; --ok: #6cbb7d; --bad: #e0655a; --warn: #d0a04a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1.25rem 4rem; background: var(--bg); color: var(--fg);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 62rem; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  h2 { font-size: 1rem; margin: 2rem 0 .75rem; letter-spacing: -.005em; }
+  .sub { color: var(--muted); margin: 0 0 2rem; }
+  a { color: var(--accent); }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 1.25rem; margin-bottom: 1.25rem;
+  }
+  label { display: block; font-size: .82rem; color: var(--muted); margin-bottom: .3rem; }
+  input, select, button {
+    font: inherit; color: inherit; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px; padding: .5rem .6rem;
+  }
+  input[type=url], input[type=text] { width: 100%; }
+  input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); }
+  button {
+    background: var(--accent); color: #fff; border: none; padding: .55rem 1.1rem;
+    border-radius: 6px; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .grid { display: grid; gap: 1rem 1.25rem; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); }
+  .row { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: .55rem .5rem; border-bottom: 1px solid var(--line); }
+  th { font-size: .78rem; color: var(--muted); font-weight: 600; }
+  .pill {
+    display: inline-block; font-size: .74rem; padding: .12rem .5rem; border-radius: 99px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .pill.running { color: var(--accent); border-color: var(--accent); }
+  .pill.done { color: var(--ok); border-color: var(--ok); }
+  .pill.failed, .pill.cancelled { color: var(--bad); border-color: var(--bad); }
+  .bar { height: 5px; background: var(--line); border-radius: 99px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .84rem; }
+  .muted { color: var(--muted); }
+  .err {
+    color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, transparent);
+    border: 1px solid var(--bad); border-radius: 6px; padding: .7rem .85rem;
+    white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .8rem;
+  }
+  .warn { color: var(--warn); font-size: .85rem; }
+  .seg { display: grid; grid-template-columns: 4.5rem 1fr 1fr; gap: .75rem; padding: .45rem 0;
+         border-bottom: 1px solid var(--line); font-size: .88rem; }
+  .seg .t { color: var(--muted); font-family: ui-monospace, monospace; font-size: .78rem; }
+  .seg.skip { opacity: .45; }
+  audio { width: 100%; margin-top: .75rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1><a href="/" style="text-decoration:none;color:inherit">Bilingual Audio</a></h1>
+  <p class="sub">Every sentence, followed by its translation.</p>
+  {% block body %}{% endblock %}
+</main>
+</body>
+</html>

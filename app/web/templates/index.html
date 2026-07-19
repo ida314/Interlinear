@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block body %}
+
+<form class="card" method="post" action="/jobs">
+  <label for="url">Video URL</label>
+  <input id="url" type="url" name="url" required placeholder="https://www.youtube.com/watch?v=…">
+
+  <div class="grid" style="margin-top:1rem">
+    <div>
+      <label for="language">Source language</label>
+      <input id="language" type="text" name="language" placeholder="auto" size="6">
+    </div>
+    <div>
+      <label for="target_lang">Translate to</label>
+      <select id="target_lang" name="target_lang">
+        {% for code in voices %}
+        <option value="{{ code }}" {% if code == 'en' %}selected{% endif %}>{{ code }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="segmentation_mode">Split by</label>
+      <select id="segmentation_mode" name="segmentation_mode">
+        <option value="sentence" selected>sentences</option>
+        <option value="words">word count</option>
+      </select>
+    </div>
+    <div>
+      <label for="max_words_per_chunk">Words per chunk</label>
+      <input id="max_words_per_chunk" type="number" name="max_words_per_chunk"
+             value="{{ defaults.max_words_per_chunk }}" min="3" max="40">
+    </div>
+    <div>
+      <label for="tts_speed">Translation speed</label>
+      <input id="tts_speed" type="number" step="0.05" name="tts_speed"
+             value="{{ defaults.tts_speed }}" min="0.5" max="2.0">
+    </div>
+    <div>
+      <label for="pre_gap">Pause before (s)</label>
+      <input id="pre_gap" type="number" step="0.05" name="pre_gap"
+             value="{{ defaults.pre_gap }}" min="0" max="3">
+    </div>
+    <div>
+      <label for="post_gap">Pause after (s)</label>
+      <input id="post_gap" type="number" step="0.05" name="post_gap"
+             value="{{ defaults.post_gap }}" min="0" max="3">
+    </div>
+  </div>
+
+  <p class="muted" style="font-size:.82rem;margin:1rem 0 0">
+    Pacing can be retuned instantly after the job finishes — those knobs never re-run a model.
+  </p>
+  <div class="row" style="margin-top:1rem"><button type="submit">Generate</button></div>
+</form>
+
+<h2>Jobs</h2>
+{% if jobs %}
+<table>
+  <thead><tr><th>Status</th><th>Title</th><th>Language</th><th></th></tr></thead>
+  <tbody>
+  {% for job in jobs %}
+    <tr>
+      <td><span class="pill {{ job.status }}">{{ job.status }}</span></td>
+      <td>
+        <a href="/jobs/{{ job.id }}">{{ job.title or job.url }}</a>
+        {% if job.status == 'running' and job.stage %}
+          <span class="muted mono"> · {{ job.stage }} {{ (job.progress * 100) | round | int }}%</span>
+        {% endif %}
+      </td>
+      <td class="muted mono">{{ job.params.target_lang }}</td>
+      <td class="muted mono">{{ job.elapsed | round | int }}s</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">Nothing yet. Paste a URL above.</p>
+{% endif %}
+
+{% endblock %}

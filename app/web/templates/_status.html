@@ -1,0 +1,43 @@
+{# Fetched and swapped by the poller in job.html. Self-describing: the data-poll attribute
+   tells the client whether there is any point asking again. #}
+<div id="status" data-poll="{{ 1 if job.status in ('queued', 'running') else 0 }}">
+
+  <div class="row" style="justify-content:space-between">
+    <span class="pill {{ job.status }}">{{ job.status }}</span>
+    <span class="muted mono">
+      {% if job.stage %}{{ job.stage }}{% endif %}
+      {% if job.status == 'running' %} · {{ job.elapsed | round | int }}s{% endif %}
+    </span>
+  </div>
+
+  {% if job.status == 'running' %}
+  <div class="bar" style="margin-top:.6rem"><i style="width: {{ (job.progress * 100) | round | int }}%"></i></div>
+  {% endif %}
+
+  {% if job.error %}
+  <div class="err" style="margin-top:.75rem">{{ job.error }}</div>
+  {% endif %}
+
+  {% if job.warnings %}
+  <p class="warn" style="margin:.6rem 0 0">
+    {{ job.warnings }} warning{{ '' if job.warnings == 1 else 's' }} — see timeline.json.
+  </p>
+  {% endif %}
+
+  <div class="row" style="margin-top:.9rem">
+    {% if has_output %}
+      <a href="/files/{{ job.id }}/out.mp3"><button type="button">Download MP3</button></a>
+      <a class="muted mono" href="/files/{{ job.id }}/out.lrc">.lrc</a>
+      <a class="muted mono" href="/files/{{ job.id }}/timeline.json">timeline.json</a>
+    {% endif %}
+    {% if job.status in ('queued', 'running') %}
+      <button type="button" class="ghost" data-action="cancel">Cancel</button>
+    {% elif job.status in ('failed', 'cancelled') %}
+      <button type="button" class="ghost" data-action="retry">Retry</button>
+    {% endif %}
+  </div>
+
+  {% if has_output %}
+  <audio controls preload="none" src="/files/{{ job.id }}/out.mp3"></audio>
+  {% endif %}
+</div>
