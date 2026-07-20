@@ -8,7 +8,9 @@ out of band; pinning it in the lockfile and never touching it is not a viable st
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from app.audio import io
@@ -25,8 +27,45 @@ class FetchError(RuntimeError):
     """
 
 
+def ytdlp_command() -> list[str]:
+    """How to invoke yt-dlp here.
+
+    Prefer the console script, but fall back to running the module under the *current*
+    interpreter. A virtualenv that was never `activate`d has yt-dlp installed and importable
+    while its bin directory is absent from PATH, which is the common case for a service run
+    by an absolute path to `.venv/bin/python`.
+    """
+    exe = shutil.which("yt-dlp")
+    if exe:
+        return [exe]
+    try:
+        import yt_dlp  # noqa: F401, PLC0415
+    except ImportError:
+        raise FetchError(
+            "yt-dlp not found on PATH and not importable. Install it with "
+            "`pip install yt-dlp` into the same environment as this app."
+        ) from None
+    return [sys.executable, "-m", "yt_dlp"]
+
+
+# yt-dlp only enables deno by default, but YouTube extraction now needs *some* JS runtime and
+# fails with a bare 403 without one. Anything on this list will do, so use whatever the box
+# happens to have rather than making the operator install a second runtime.
+JS_RUNTIMES = ("deno", "node", "bun")
+
+
+def js_runtime_args() -> list[str]:
+    """Enable a non-default JS runtime when one is present and deno is not."""
+    if shutil.which("deno"):
+        return []          # the default already covers this
+    for runtime in JS_RUNTIMES:
+        if shutil.which(runtime):
+            return ["--js-runtimes", runtime]
+    return []              # let yt-dlp fail with its own explanatory message
+
+
 def _ytdlp(args: list[str], cfg: Settings) -> subprocess.CompletedProcess[str]:
-    cmd = ["yt-dlp", "--no-playlist", "--no-progress"]
+    cmd = [*ytdlp_command(), "--no-playlist", "--no-progress", *js_runtime_args()]
     if cfg.ytdlp_cookies_from_browser:
         cmd += ["--cookies-from-browser", cfg.ytdlp_cookies_from_browser]
     cmd += args
