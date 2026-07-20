@@ -12,7 +12,10 @@ import pytest
 
 from app.models.timeline import RenderParams, Segment, SourceInfo, Timeline, Word
 from app.pipeline.translate import (
+    ARBITER_TEMPERATURE,
+    TRANSLATE_TEMPERATURE,
     _parse_json,
+    http_completer,
     make_arbiter,
     translate_timeline,
 )
@@ -196,3 +199,54 @@ def test_arbiter_with_no_candidates_makes_no_call():
         raise AssertionError("should not be called")
 
     assert make_arbiter(explodes)([], [], "es") == set()
+
+
+def test_arbitration_is_sampled_deterministically(monkeypatch):
+    """Arbitration is classification, so it must not sample.
+
+    Measured against Qwen3.6-27B: at temperature 0.2 the model returned a well-formed but
+    *empty* boundary set in 5 of 12 runs, versus 0 of 12 at temperature 0.0. An empty set is
+    not an error — it silently means "no sentence ends here", so the job runs sentences
+    together and still exits zero.
+    """
+    sent = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None: ...
+
+        def json(self) -> dict:
+            return {"choices": [{"message": {"content": '{"boundaries": []}'}}]}
+
+    def fake_post(url, *, headers, json, timeout):  # noqa: A002
+        sent.append(json)
+        return FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    words = [Word(text=t, start=i, end=i + 0.5) for i, t in enumerate(["uno", "dos"])]
+    make_arbiter()(words, [0], "es")
+    translate_timeline(make_timeline(["uno"]), completer=http_completer())
+
+    # The stub reply is not a valid translation payload, so the translation stage retries
+    # sentence by sentence — hence "every call after the first", not a fixed call count.
+    arbiter_call, *translation_calls = [payload["temperature"] for payload in sent]
+    assert arbiter_call == ARBITER_TEMPERATURE == 0.0
+    assert translation_calls and set(translation_calls) == {TRANSLATE_TEMPERATURE}
+
+
+def test_empty_arbiter_reply_is_distinguishable_from_failure():
+    """The two failure modes are opposite, so a test that only asks about true sentence
+    ends cannot tell them apart: an exception confirms *every* candidate (over-splitting),
+    while an empty reply confirms *none* (under-splitting)."""
+    words = [Word(text=t, start=i, end=i + 0.5) for i, t in enumerate(["uno", "dos", "tres"])]
+
+    def empty(system: str, user: str) -> str:
+        return json.dumps({"boundaries": []})
+
+    def broken(system: str, user: str) -> str:
+        raise RuntimeError("timeout")
+
+    assert make_arbiter(empty)(words, [0, 1], "es") == set()
+    assert make_arbiter(broken)(words, [0, 1], "es") == {0, 1}

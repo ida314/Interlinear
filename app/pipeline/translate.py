@@ -26,6 +26,15 @@ from app.pipeline.sbd import word_join
 # `(system_prompt, user_prompt) -> completion text`
 Completer = Callable[[str, str], str]
 
+# Translation is generative and benefits from a little sampling. Arbitration is
+# classification, where sampling only costs accuracy: measured against Qwen3.6-27B, 12 runs
+# per setting, temperature 0.2 returned a well-formed but *empty* boundary set 5 times out
+# of 12, while temperature 0.0 was correct 12/12. An empty set is not an error — it silently
+# means "no sentence ends anywhere here", so the job runs sentences together and still exits
+# zero.
+TRANSLATE_TEMPERATURE = 0.2
+ARBITER_TEMPERATURE = 0.0
+
 LANGUAGE_NAMES = {
     "en": "English", "es": "Spanish", "pt": "Portuguese", "fr": "French", "de": "German",
     "ru": "Russian", "zh": "Chinese", "ja": "Japanese", "ko": "Korean", "it": "Italian",
@@ -60,8 +69,14 @@ def language_name(code: str) -> str:
     return LANGUAGE_NAMES.get(code, code)
 
 
-def http_completer(cfg: Settings | None = None) -> Completer:
-    """OpenAI-compatible chat completion. Works against Ollama and vLLM unchanged."""
+def http_completer(
+    cfg: Settings | None = None, *, temperature: float = TRANSLATE_TEMPERATURE
+) -> Completer:
+    """OpenAI-compatible chat completion. Works against Ollama and vLLM unchanged.
+
+    `temperature` is set per *completer* rather than per call, so the `Completer` contract
+    stays a plain `(system, user) -> str` that a test can stub with a two-argument function.
+    """
     cfg = cfg or settings
 
     def complete(system: str, user: str) -> str:
@@ -76,7 +91,7 @@ def http_completer(cfg: Settings | None = None) -> Completer:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "temperature": 0.2,
+                "temperature": temperature,
                 "response_format": {"type": "json_object"},
             },
             timeout=cfg.llm_timeout,
@@ -190,7 +205,7 @@ def make_arbiter(
     it gets wrong.
     """
     cfg = cfg or settings
-    complete = completer or http_completer(cfg)
+    complete = completer or http_completer(cfg, temperature=ARBITER_TEMPERATURE)
 
     def arbitrate(words: Sequence[Word], candidates: list[int], lang: str) -> set[int]:
         if not candidates:
