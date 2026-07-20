@@ -16,70 +16,93 @@ together.**
 
 ---
 
-## The one genuinely hard part: CTranslate2
+## There is no build step
 
-`faster-whisper` depends on CTranslate2, which **ships no aarch64 CUDA wheels**. `pip
-install` succeeds, and then either throws at runtime or silently runs on CPU at roughly 1/20
-speed. Build it from source:
+This used to be the hard part. `faster-whisper` depends on CTranslate2, which ships no
+aarch64 CUDA wheels — `pip install` succeeds and then silently runs on CPU at roughly 1/20
+speed, and fixing it meant a from-source CMake build with a Thrust compat shim for CUDA 13.
+
+**That dependency is gone.** Whisper now runs through plain PyTorch (`transformers`), so
+installation is stock wheels on every platform. Verified on this hardware:
+`torch 2.13.0+cu130` from the standard aarch64 index, CUDA available, GB10 detected, no
+compilation.
 
 ```bash
-cmake -DCMAKE_CUDA_ARCHITECTURES="75;80;86;87;89;90;100;120;121;121-virtual" \
-      -DCMAKE_CXX_STANDARD=17 -DCMAKE_CUDA_STANDARD=17 \
-      -DWITH_CUDA=ON -DWITH_CUDNN=ON ..
+python3 -m venv .venv
+.venv/bin/pip install -U pip wheel setuptools
+.venv/bin/pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu130
+.venv/bin/python -c "import torch; print(torch.cuda.is_available())"   # must print True
+.venv/bin/pip install -e '.[dev,web]'
 ```
 
-Two CUDA 13 gotchas that will bite:
+Install torch **first and alone**, then re-check `torch.cuda.is_available()` after every
+subsequent `pip install`. `kokoro` and `wtpsplit` will pull a CPU-only torch from PyPI and
+silently replace the CUDA build if given the chance — the same silent-degradation failure
+the CTranslate2 problem used to cause, arriving by a different route.
 
-- Thrust 2.x removed `thrust::unary_function` / `binary_function`, which CTranslate2 still
-  references. Needs a compat shim after `#include "misc/wrap_thrust.hpp"`.
-- The C++17 flags above are required; CTranslate2 defaults lower and the bundled CCCL will
-  not compile.
+A host venv is now the recommended layout. The container existed to hold the build; with
+nothing left to build, a venv gives faster edit-run cycles. Keep the LLM server in Docker.
 
-**Read [rappdw/transcribe-dgx](https://github.com/rappdw/transcribe-dgx) before starting.**
-It is WhisperX large-v3 on this exact hardware with the sm_121 patches already solved.
-[atripathy86/transcribe](https://github.com/atripathy86/transcribe) ships precompiled CUDA 13
-aarch64 CT2 binaries. Budget a day; this is a Docker layer, not a redesign.
+## Silent CPU fallback is still the failure mode to fear
 
-## Silent CPU fallback is the failure mode to fear
+Components in this stack degrade to CPU rather than erroring, so you can ship something that
+appears to work and is 20x slower than it should be.
 
-CTranslate2 and Chatterbox both degrade to CPU rather than erroring. On a batch workload you
-can ship something that appears to work and is 20x slower than it should be.
+`app/pipeline/asr.py:assert_cuda()` guards this — keep `BAG_REQUIRE_CUDA=1` in production.
+It now checks the *resolved* device rather than merely asking torch whether CUDA exists.
 
-`app/pipeline/asr.py:assert_cuda()` exists for this. Keep `BAG_REQUIRE_CUDA=1` in
-production. It is the difference between finding out in seconds and finding out after a
-40-minute job.
+`BAG_DEVICE` defaults to `auto`, which walks cuda → mps → cpu. Set it explicitly to pin.
 
 ## Things that are NOT problems
 
 - **PyTorch.** sm_121 is binary-compatible with sm_120. Stock aarch64 wheels from
-  `download.pytorch.org/whl/cu128` (or `cu130`) work. Ignore the custom "sm_121 wheels"
-  circulating on HuggingFace — they solve a problem you do not have.
+  `download.pytorch.org/whl/cu130` (or `cu128`) work — confirmed. Ignore the custom
+  "sm_121 wheels" circulating on HuggingFace; they solve a problem you do not have.
 - **The capability warning.** `Minimum and Maximum cuda capability supported by this version
   of PyTorch is (8.0) - (12.0)` appears on GB10 and is cosmetic. Don't chase it.
 - **Kokoro.** Runs fine — but use the **PyTorch path, not ONNX Runtime**. `onnxruntime-gpu`
   aarch64 CUDA support is patchy and several Kokoro wrappers silently downgrade to CPU when
   they detect aarch64. At 82M params the PyTorch path is fast regardless. For a Japanese
   target voice, MeCab needs `unidic-lite` plus a symlink into `site-packages/unidic/dicdir`.
+- **yt-dlp.** Needs a JavaScript runtime for YouTube extraction or it fails with a bare
+  HTTP 403. `fetch.py` auto-detects deno, node or bun; install one if none is present.
 
 ## Base image
 
-`nvcr.io/nvidia/pytorch:25.10-py3` or newer — matches host CUDA 13 and ships `compute_120`
-PTX that JITs to sm_121, which removes most of the workarounds above. For vLLM,
-`nvcr.io/nvidia/vllm:26.03-py3` is proven on GB10.
-
-No NGC container ships a CUDA-enabled CTranslate2. That stays your one custom build layer.
+If you do containerise, `nvcr.io/nvidia/pytorch:25.10-py3` or newer matches host CUDA 13 and
+ships `compute_120` PTX that JITs to sm_121. For vLLM, `nvcr.io/nvidia/vllm:26.03-py3` is
+proven on GB10.
 
 ---
 
-## Translation backend: start with Ollama, move to vLLM
+## Translation backend
 
-`app/config.py` speaks OpenAI-compatible HTTP, so the two are interchangeable —
+`app/config.py` speaks OpenAI-compatible HTTP, so any server that honours it works —
 `BAG_LLM_BASE_URL` is the only change.
 
-**Start:** Ollama + `qwen3:14b` (strongest on zh/ja). ~20-25 tok/s single-stream here.
-Fine for getting the pipeline working.
+**What is actually running on this box** is vLLM serving `nvidia/Qwen3.6-27B-NVFP4`. The
+working invocation is preserved in a container named `vllm-qwen36-27b-nvfp4`, so:
 
-**Then:** vLLM with a large MoE. This is counterintuitive and worth internalising:
+```bash
+docker start vllm-qwen36-27b-nvfp4      # ~4 min cold start
+curl -s localhost:8000/v1/models        # wait for this to answer
+```
+
+```
+BAG_LLM_BASE_URL=http://localhost:8000/v1
+BAG_LLM_MODEL=nvidia/Qwen3.6-27B-NVFP4
+```
+
+Flags that matter on GB10, recoverable with `docker inspect`: `VLLM_NVFP4_GEMM_BACKEND=marlin`,
+`TORCH_CUDA_ARCH_LIST=12.1a`, `--gpu-memory-utilization 0.5`, `--kv-cache-dtype fp8`,
+`--enforce-eager`, `--enable-prefix-caching`, and `enable_thinking: false` — reasoning traces
+would wreck JSON parsing.
+
+Measured: ru→en translation is fluent, and `response_format: {"type":"json_object"}` is
+accepted (as is omitting it). Single-stream decode is **~10 tok/s** for this dense 27B, which
+is the bandwidth-bound behaviour predicted below — batching is worth more than anything else.
+
+**Where to go next:** a large MoE. This is counterintuitive and worth internalising:
 
 | Model | Single-stream | Concurrency 256 |
 |---|---|---|
@@ -115,6 +138,11 @@ Whisper's built-in punctuation is *better* than dedicated restoration models for
 pt/ru/es/fr/de, because it has prosodic access — it hears the rising intonation of a
 question where a text-only model sees only words. `app/pipeline/sbd.py` weights it
 accordingly (`STRONG_PUNCT_LANGS`).
+
+Observed caveat: on the first real Russian clip, `large-v3` punctuated and capitalised the
+first half cleanly and then dropped both for a stretch, emitting bare lowercase runs. So
+`STRONG_PUNCT_LANGS` is right about punctuation *precision* but should not be read as a
+promise of *recall*, even for Russian. The pause signal carried those segments.
 
 For **zh/ja it frequently omits punctuation entirely**. That is a recall problem, not a
 precision one: when a mark appears it is still trustworthy. Noisy-OR fusion handles the
