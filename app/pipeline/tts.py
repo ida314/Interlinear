@@ -30,6 +30,16 @@ KOKORO_VOICES = {
     "pt": "pf_dora", "ja": "jf_alpha", "zh": "zf_xiaobei", "hi": "hf_alpha",
 }
 
+# Kokoro's own one-letter language codes, which are *not* ISO 639-1. Spelling them out
+# matters for exactly one entry: `"en"[:1]` is `"e"`, which is Kokoro's **Spanish** code, so
+# truncating the ISO code would synthesise English text through a Spanish G2P. Every other
+# entry happens to survive truncation, which is precisely what makes the bug easy to miss.
+KOKORO_LANG_CODES = {
+    "en": "a",   # American English, matching the af_* voices
+    "es": "e", "fr": "f", "it": "i", "pt": "p",
+    "ja": "j", "zh": "z", "hi": "h",
+}
+
 
 class TTSError(RuntimeError):
     pass
@@ -60,7 +70,10 @@ class KokoroEngine:
         if lang not in self._pipelines:
             from kokoro import KPipeline  # noqa: PLC0415
 
-            self._pipelines[lang] = KPipeline(lang_code=lang[:1] or "a", device=self.device)
+            code = KOKORO_LANG_CODES.get(lang)
+            if code is None:
+                raise TTSError(f"Kokoro has no language code for {lang!r}")
+            self._pipelines[lang] = KPipeline(lang_code=code, device=self.device)
         return self._pipelines[lang]
 
     def voices(self, lang: str) -> list[str]:
