@@ -18,6 +18,7 @@ import soundfile as sf
 # 24kHz mono matches Kokoro's native output rate, so no resampling is needed when splicing
 # synthesised speech into source audio.
 TARGET_SR = 24000
+ASR_SR = 16000      # what every speech model in this stack expects
 
 
 class FFmpegError(RuntimeError):
@@ -50,6 +51,20 @@ def decode_to_wav(src: str | Path, dst: str | Path, *, sr: int = TARGET_SR) -> P
         "-vn", "-ac", "1", "-ar", str(sr), "-c:a", "pcm_s16le", str(dst),
     ])
     return dst
+
+
+def decode_to_array(src: str | Path, *, sr: int = ASR_SR) -> np.ndarray:
+    """Decode straight to a mono float32 array at `sr`, without writing a file.
+
+    Speech models want 16kHz while the render source of truth is 24kHz. Resampling changes
+    no timestamp — seconds are seconds — so this needs no offset correction anywhere; it
+    exists so the model path never mutates the audio the renderer splices.
+    """
+    raw = _run([
+        ffmpeg_path(), "-nostdin", "-i", str(src),
+        "-vn", "-ac", "1", "-ar", str(sr), "-f", "f32le", "-",
+    ])
+    return np.frombuffer(raw, dtype=np.float32).copy()
 
 
 def read_wav(path: str | Path, *, expect_sr: int | None = None) -> tuple[np.ndarray, int]:
